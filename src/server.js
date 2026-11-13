@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MongoClient } from 'mongodb';
 import process from 'node:process';
+import 'dotenv/config';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, '../public');
@@ -82,6 +83,7 @@ async function syncLibrary() {
       },
     })), { ordered: false });
   }
+  await videoCollection.deleteMany({ video: { $nin: videos.map((video) => video.video) } });
   log('info', 'library_synced', { videoCount: videos.length });
   return videos.length;
 }
@@ -106,7 +108,7 @@ async function startDownload(url) {
   const record = { id, url, status: 'running', startedAt, output: '' };
   await jobCollection.insertOne(record);
   const args = [
-    '--ignore-errors', '--no-overwrites', '--download-archive', path.join(libraryDir, 'download-archive.txt'),
+    '--ignore-errors', '--no-overwrites', '--newline', '--no-color', '--download-archive', path.join(libraryDir, 'download-archive.txt'),
     '--write-info-json', '--write-description', '--write-thumbnail', '--embed-metadata', '--windows-filenames',
     '--output', path.join(libraryDir, '%(uploader,channel|Unknown uploader)s', '%(playlist_title|Videos)s', '%(upload_date)s - %(title).180B [%(id)s].%(ext)s'),
   ];
@@ -115,9 +117,13 @@ async function startDownload(url) {
   log('info', 'download_started', { jobId: id, url });
   const child = spawn(process.env.YTDLP_PATH || 'yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let output = '';
+  let lastPersist = 0;
   const append = (chunk) => {
     output = (output + chunk.toString()).slice(-12_000);
-    void jobCollection.updateOne({ id }, { $set: { output } });
+    if (Date.now() - lastPersist > 1500) {
+      lastPersist = Date.now();
+      void jobCollection.updateOne({ id }, { $set: { output } }).catch((error) => log('error', 'job_log_persist_failed', { jobId: id, error: error.message }));
+    }
   };
   child.stdout.on('data', append);
   child.stderr.on('data', append);
@@ -155,14 +161,23 @@ async function serveFile(req, res, filePath) {
   createReadStream(filePath).pipe(res);
 }
 
-const client = new MongoClient(process.env.MONGODB_URI || '');
-await client.connect();
-const db = client.db();
-const videoCollection = db.collection('videos');
-const jobCollection = db.collection('download_jobs');
+if (!process.env.MONGODB_URI) {
+  throw new Error('MONGODB_URI is missing. Add it to .env or the process environment.');
+}
+const client = new MongoClient(process.env.MONGODB_URI);
+try {
+  await client.connect();
+} catch (error) {
+  log('error', 'mongodb_connection_failed', { error: error.message });
+  throw error;
+}
+const db = client.db(process.env.MONGODB_DATABASE || 'facebook_archive');
+const videoCollection = db.collection('facebook_videos');
+const jobCollection = db.collection('facebook_download_jobs');
 await videoCollection.createIndex({ video: 1 }, { unique: true });
 await videoCollection.createIndex({ uploadDate: -1, title: 1 });
 await jobCollection.createIndex({ startedAt: -1 });
+await jobCollection.updateMany({ status: 'running' }, { $set: { status: 'failed', finishedAt: new Date(), output: 'Container restarted before this download finished.' } });
 await import('node:fs/promises').then(({ mkdir }) => mkdir(libraryDir, { recursive: true }));
 log('info', 'mongodb_connected', { database: db.databaseName });
 try { await syncLibrary(); } catch (error) { log('error', 'initial_library_sync_failed', { error: error.message }); }

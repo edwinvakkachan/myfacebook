@@ -1,56 +1,51 @@
 # Facebook Video Archive
 
-A Node.js command-line wrapper around [yt-dlp](https://github.com/yt-dlp/yt-dlp) for building a personal, Tube Archivist style library from Facebook video or page URLs.
+A personal video library with a web interface, backed by your MongoDB server and `yt-dlp`. It can save Facebook videos you own or are allowed to archive, then search and play the downloaded files in a browser.
 
-## Requirements
+Facebook changes its website often, so extraction depends on the current `yt-dlp` support. Use only videos you have permission to save.
 
-- Node.js 18 or newer
-- `yt-dlp` installed and available on `PATH` (or pass `--yt-dlp PATH`)
-- `ffmpeg` available on `PATH` for metadata embedding and format merging
+## Run with Docker Compose
 
-Facebook changes its website frequently, so a URL only works while yt-dlp's Facebook extractor supports it. Use this only for videos you own or have permission to archive, and follow Facebook's terms and applicable copyright rules.
+1. Set `MONGODB_URI` in `.env` (or copy `.env.example` if the file is missing). For Atlas, copy the driver URI from Atlas. Set `MONGODB_DATABASE=facebook_archive` or choose another database name. The server loads `.env` for `npm start`; Compose passes the same URI into the container.
+2. Start the app from this folder:
 
-## Use
+   ```sh
+   docker compose up -d --build
+   ```
 
-Pass a single video URL:
+3. Open [http://localhost:8080](http://localhost:8080).
+
+The app stores downloaded videos and metadata in `./library`. The video catalog uses MongoDB collection `facebook_videos`; download history and logs use `facebook_download_jobs`.
+
+View application logs with:
+
+```sh
+docker compose logs -f facebook-archive
+```
+
+Logs are JSON records with timestamps, severity, event names, and request/download context. `LOG_LEVEL=debug` includes HTTP request logs. Compose rotates container logs to keep the local log files bounded. The MongoDB server is selected by `MONGODB_URI` and runs separately (for example, MongoDB Atlas).
+
+### Optional Facebook cookies
+
+For videos your signed-in account is allowed to view, put an yt-dlp-compatible Netscape cookie file at `./config/cookies.txt` and set this in `.env`:
+
+```dotenv
+COOKIE_FILE=/config/cookies.txt
+```
+
+Restart the app with `docker compose up -d`. Treat that file like a password. The web UI is bound to localhost by default.
+
+## Web library
+
+The interface provides URL submission, download status, title/creator search, thumbnails, and in-browser playback. One URL per line is supported, with up to 20 links per submission. Download jobs and the catalog are stored in MongoDB; media files remain in the mounted library folder.
+
+## Run the original CLI without Docker
+
+Install Node.js 18+, `yt-dlp`, and `ffmpeg`, then use:
 
 ```sh
 npm run archive -- "https://www.facebook.com/watch/?v=123456789"
-```
-
-Pass multiple URLs:
-
-```sh
-npm run archive -- "https://www.facebook.com/watch/?v=123" "https://fb.watch/example/"
-```
-
-Or make `urls.txt` with one URL per line (lines beginning with `#` are ignored):
-
-```sh
 npm run archive -- --input urls.txt --output ./library
 ```
 
-For videos your logged-in account can access, yt-dlp can read cookies from a supported local browser profile:
-
-```sh
-npm run archive -- --input urls.txt --browser chrome
-```
-
-Supported browser names and profile syntax depend on yt-dlp; see its `--cookies-from-browser` help. Keep your browser profile and any exported cookies private.
-
-## Library layout
-
-Downloads are organized as:
-
-```text
-library/
-  <uploader>/
-    <playlist or Videos>/
-      <date> - <title> [<video-id>].mp4
-      <date> - <title> [<video-id>].info.json
-      <date> - <title> [<video-id>].description
-      <date> - <title> [<video-id>].jpg
-  download-archive.txt
-```
-
-`download-archive.txt` lets yt-dlp skip videos it has already downloaded on later runs. Remove an entry from that file if you intentionally want to retry that video.
+The standalone CLI writes an archive list so repeated runs skip previously downloaded items.

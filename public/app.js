@@ -54,7 +54,7 @@ async function loadJobs() {
   try {
     const response = await fetch('/api/jobs');
     const jobs = await response.json();
-    box.innerHTML = jobs.slice(-8).reverse().map((job) => `<div class="job"><b>${escapeHtml(job.url)}</b> · <span class="${job.status === 'failed' ? 'failed' : ''}">${escapeHtml(job.status)}</span>${job.status === 'failed' ? ` — ${escapeHtml(job.output || 'See container logs for details.')}` : ''}</div>`).join('');
+    box.innerHTML = jobs.slice(0, 8).map((job) => `<div class="job"><b>${escapeHtml(job.url)}</b> · <span class="${job.status === 'failed' ? 'failed' : ''}">${escapeHtml(job.status)}</span>${job.status === 'failed' ? ` — ${escapeHtml(job.output || 'See container logs for details.')}` : ''}</div>`).join('');
     if (jobs.some((job) => job.status === 'running' || job.status === 'queued')) {
       if (!jobTimer) jobTimer = setInterval(async () => { await loadJobs(); await loadLibrary(); }, 4000);
     } else if (jobTimer) { clearInterval(jobTimer); jobTimer = null; }
