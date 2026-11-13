@@ -66,25 +66,46 @@ async function findPageReels(pageUrl, limit) {
   const headers = {
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
     'accept-language': 'en-US,en;q=0.9',
+    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   };
   if (process.env.COOKIE_FILE) {
     const cookieText = await readFile(process.env.COOKIE_FILE, 'utf8');
     const cookieHeader = facebookCookieHeader(cookieText);
     if (cookieHeader) headers.cookie = cookieHeader;
   }
-  const response = await fetch(page, { headers, redirect: 'follow', signal: AbortSignal.timeout(25_000) });
-  if (!response.ok) throw new Error(`Facebook returned HTTP ${response.status} while opening this page.`);
-  if (/facebook\.com\/(?:login|checkpoint)/i.test(response.url)) {
-    throw new Error('Facebook requires a login for this page. Configure an authorized cookies.txt in COOKIE_FILE.');
-  }
-  const markup = (await response.text())
-    .replace(/\\u002[fF]/g, '/')
-    .replace(/\\\//g, '/')
-    .replace(/%2[fF]/g, '/')
-    .replace(/&amp;/g, '&');
   const ids = new Set();
-  for (const match of markup.matchAll(/\/reel\/(\d+)/gi)) ids.add(match[1]);
-  for (const match of markup.matchAll(/\/watch\/\?[^"'\s<>]*?\bv=(\d+)/gi)) ids.add(match[1]);
+  const mobilePage = new URL(page);
+  mobilePage.hostname = 'm.facebook.com';
+  let lastStatus = null;
+  for (const target of [mobilePage, page]) {
+    const response = await fetch(target, { headers, redirect: 'follow', signal: AbortSignal.timeout(25_000) });
+    if (!response.ok) {
+      lastStatus = response.status;
+      if ([400, 403, 404].includes(response.status)) continue;
+      const error = new Error(`Facebook returned HTTP ${response.status} while opening this page.`);
+      error.statusCode = 422;
+      throw error;
+    }
+    if (/facebook\.com\/(?:login|checkpoint)/i.test(response.url)) {
+      const error = new Error('Facebook requires a login for this page. Configure authorized cookies in COOKIE_FILE.');
+      error.statusCode = 422;
+      throw error;
+    }
+    lastStatus = null;
+    const markup = (await response.text())
+      .replace(/\\u002[fF]/g, '/')
+      .replace(/\\\//g, '/')
+      .replace(/%2[fF]/g, '/')
+      .replace(/&amp;/g, '&');
+    for (const match of markup.matchAll(/\/reel\/(\d+)/gi)) ids.add(match[1]);
+    for (const match of markup.matchAll(/\/watch\/\?[^"'\s<>]*?\bv=(\d+)/gi)) ids.add(match[1]);
+    if (ids.size >= limit) break;
+  }
+  if (!ids.size && lastStatus) {
+    const error = new Error(`Facebook rejected the page request (HTTP ${lastStatus}). Try adding the page's /reels/ URL and configure authorized cookies in COOKIE_FILE if the page requires login.`);
+    error.statusCode = 422;
+    throw error;
+  }
   return [...ids].slice(0, limit).map((id) => `https://www.facebook.com/reel/${id}`);
 }
 
@@ -247,7 +268,17 @@ const server = http.createServer(async (req, res) => {
       if (!isFacebookUrl(pageUrl) || !Number.isInteger(limit) || limit < 1 || limit > 100) {
         sendJson(res, 400, { error: 'Enter a Facebook page URL and a reel count from 1 to 100.' }); return;
       }
-      const reels = await findPageReels(pageUrl, limit);
+      let reels;
+      try {
+        reels = await findPageReels(pageUrl, limit);
+      } catch (error) {
+        if (error.statusCode) {
+          log('warn', 'page_scan_rejected', { pageUrl, statusCode: error.statusCode, error: error.message });
+          sendJson(res, error.statusCode, { error: error.message });
+          return;
+        }
+        throw error;
+      }
       if (!reels.length) {
         sendJson(res, 422, { error: 'No reel links were found on the page. Facebook may require login, or the page may not expose reels in its HTML. Try its /reels/ tab or use direct reel links.' }); return;
       }
@@ -265,6 +296,9 @@ const server = http.createServer(async (req, res) => {
       if (!filePath.startsWith(`${libraryDir}${path.sep}`)) { res.writeHead(403); res.end(); return; }
       if (!videoExtensions.has(path.extname(filePath).toLowerCase()) && !imageExtensions.has(path.extname(filePath).toLowerCase())) { res.writeHead(415); res.end(); return; }
       await serveFile(req, res, filePath);
+    } else if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+      res.writeHead(204);
+      res.end();
     } else if (req.method === 'GET') {
       const asset = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
       const filePath = path.resolve(publicDir, asset);
@@ -274,7 +308,9 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 405, { error: 'Method not allowed.' });
     }
   } catch (error) {
-    log('error', 'request_failed', { method: req.method, path: req.url, error: error.message });
+    const missingFile = error.code === 'ENOENT' && req.method === 'GET';
+    if (!missingFile) log('error', 'request_failed', { method: req.method, path: req.url, error: error.message });
+    if (missingFile) { sendJson(res, 404, { error: 'Not found.' }); return; }
     if (!res.headersSent) sendJson(res, 500, { error: error.message || 'Unexpected server error.' });
     else res.destroy(error);
   } finally {
