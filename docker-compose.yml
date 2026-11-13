@@ -1,0 +1,44 @@
+services:
+  facebook-archive:
+    build: .
+    container_name: facebook-archive
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8080:3000"
+    environment:
+      PORT: 3000
+      LIBRARY_DIR: /library
+      COOKIE_FILE: ${COOKIE_FILE:-}
+      MONGODB_URI: ${MONGODB_URI}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ./library:/library
+      - ./config:/config:ro
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:8
+    container_name: facebook-archive-mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: facebook_archive
+      MONGO_ARCHIVE_USERNAME: archive
+      MONGO_ARCHIVE_PASSWORD: ${MONGO_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/01-init.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--username", "${MONGO_ROOT_USERNAME:-root}", "--password", "${MONGO_ROOT_PASSWORD}", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  mongo_data:

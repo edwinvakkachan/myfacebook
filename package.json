@@ -1,0 +1,17 @@
+{
+  "name": "facebook-video-archive",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A small personal Facebook video archive CLI powered by yt-dlp",
+  "type": "module",
+  "scripts": {
+    "archive": "node src/archive.js",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "mongodb": "^6.20.0"
+  }
+}
