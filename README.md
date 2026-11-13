@@ -6,7 +6,7 @@ Facebook changes its website often, so extraction depends on the current `yt-dlp
 
 ## Run with Docker Compose
 
-1. Set `MONGODB_URI` in `.env` (or copy `.env.example` if the file is missing). For Atlas, copy the driver URI from Atlas. Set `MONGODB_DATABASE=facebook_archive` or choose another database name. The server loads `.env` for `npm start`; Compose passes the same URI into the container.
+1. Set `MONGODB_URI` in `.env` (or copy `.env.example` if the file is missing). For Atlas, copy the driver URI from Atlas. Set `MONGODB_DATABASE=facebook_archive` or choose another database name. Local Compose reads these values from `.env`; Portainer can inject them as stack environment variables.
 2. Start the app from this folder:
 
    ```sh
@@ -38,6 +38,17 @@ Restart the app with `docker compose up -d`. Treat that file like a password. Th
 ## Web library
 
 The interface provides URL submission, download status, title/creator search, thumbnails, and in-browser playback. One URL per line is supported, with up to 20 links per submission. Download jobs and the catalog are stored in MongoDB; media files remain in the mounted library folder.
+
+## Run the Node server directly
+
+Install dependencies, make sure `.env` contains `MONGODB_URI`, then start the server:
+
+```sh
+npm install
+npm start
+```
+
+The configured MongoDB user needs read/write permission on the database named by `MONGODB_DATABASE` (default `facebook_archive`). URL-encode special characters in the URI username or password.
 
 ## Run the original CLI without Docker
 
