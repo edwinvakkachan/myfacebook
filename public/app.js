@@ -54,7 +54,7 @@ async function loadJobs() {
   try {
     const response = await fetch('/api/jobs');
     const jobs = await response.json();
-    box.innerHTML = jobs.slice(0, 8).map((job) => `<div class="job"><b>${escapeHtml(job.url)}</b> · <span class="${job.status === 'failed' ? 'failed' : ''}">${escapeHtml(job.status)}</span>${job.status === 'failed' ? ` — ${escapeHtml(job.output || 'See container logs for details.')}` : ''}</div>`).join('');
+    box.innerHTML = jobs.slice(0, 8).map((job) => `<div class="job"><b>${escapeHtml(job.url)}</b>${job.itemCount > 1 ? ` · ${job.itemCount} reels` : ''} · <span class="${job.status === 'failed' ? 'failed' : ''}">${escapeHtml(job.status)}</span>${job.status === 'failed' ? ` — ${escapeHtml(job.output || 'See container logs for details.')}` : ''}</div>`).join('');
     if (jobs.some((job) => job.status === 'running' || job.status === 'queued')) {
       if (!jobTimer) jobTimer = setInterval(async () => { await loadJobs(); await loadLibrary(); }, 4000);
     } else if (jobTimer) { clearInterval(jobTimer); jobTimer = null; }
@@ -72,6 +72,23 @@ $('#download-form').addEventListener('submit', async (event) => {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not start download.');
     $('#urls').value = '';
+    await loadJobs();
+  } catch (error) { $('#jobs').innerHTML = `<div class="job failed">${escapeHtml(error.message)}</div>`; }
+  finally { button.disabled = false; }
+});
+
+$('#page-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/pages', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pageUrl: $('#page-url').value.trim(), limit: Number($('#reel-limit').value) }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not add page reels.');
+    $('#page-url').value = '';
     await loadJobs();
   } catch (error) { $('#jobs').innerHTML = `<div class="job failed">${escapeHtml(error.message)}</div>`; }
   finally { button.disabled = false; }

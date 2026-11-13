@@ -41,6 +41,53 @@ function isFacebookUrl(value) {
   } catch { return false; }
 }
 
+function facebookCookieHeader(cookieText) {
+  const pairs = [];
+  for (const line of cookieText.split(/\r?\n/)) {
+    const cleaned = line.startsWith('#HttpOnly_') ? line.slice('#HttpOnly_'.length) : line;
+    if (!cleaned || cleaned.startsWith('#')) continue;
+    const fields = cleaned.split('\t');
+    if (fields.length < 7 || !/(^|\.)facebook\.com$/i.test(fields[0].replace(/^\./, ''))) continue;
+    pairs.push(`${fields[5]}=${fields[6]}`);
+  }
+  return pairs.join('; ');
+}
+
+async function findPageReels(pageUrl, limit) {
+  const page = new URL(pageUrl);
+  if (!['facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com'].includes(page.hostname.toLowerCase())) {
+    throw new Error('Use a Facebook page URL, not a video link.');
+  }
+  if (/\/reel\/\d+|\/watch\/|\/videos\/\d+/i.test(page.pathname)) throw new Error('Enter the Facebook page URL, not an individual video URL.');
+  const normalizedPath = page.pathname.replace(/\/+$/, '');
+  const pagePath = normalizedPath.replace(/\/(?:reels|videos)$/i, '');
+  page.pathname = `${pagePath}/reels/`;
+
+  const headers = {
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
+    'accept-language': 'en-US,en;q=0.9',
+  };
+  if (process.env.COOKIE_FILE) {
+    const cookieText = await readFile(process.env.COOKIE_FILE, 'utf8');
+    const cookieHeader = facebookCookieHeader(cookieText);
+    if (cookieHeader) headers.cookie = cookieHeader;
+  }
+  const response = await fetch(page, { headers, redirect: 'follow', signal: AbortSignal.timeout(25_000) });
+  if (!response.ok) throw new Error(`Facebook returned HTTP ${response.status} while opening this page.`);
+  if (/facebook\.com\/(?:login|checkpoint)/i.test(response.url)) {
+    throw new Error('Facebook requires a login for this page. Configure an authorized cookies.txt in COOKIE_FILE.');
+  }
+  const markup = (await response.text())
+    .replace(/\\u002[fF]/g, '/')
+    .replace(/\\\//g, '/')
+    .replace(/%2[fF]/g, '/')
+    .replace(/&amp;/g, '&');
+  const ids = new Set();
+  for (const match of markup.matchAll(/\/reel\/(\d+)/gi)) ids.add(match[1]);
+  for (const match of markup.matchAll(/\/watch\/\?[^"'\s<>]*?\bv=(\d+)/gi)) ids.add(match[1]);
+  return [...ids].slice(0, limit).map((id) => `https://www.facebook.com/reel/${id}`);
+}
+
 async function scanLibrary(dir = libraryDir, found = []) {
   let entries;
   try { entries = await readdir(dir, { withFileTypes: true }); } catch { return found; }
@@ -103,10 +150,10 @@ async function readRequestBody(req) {
   return JSON.parse(body || '{}');
 }
 
-async function startDownload(url) {
+async function startDownload(url, downloadUrls = [url]) {
   const id = randomUUID();
   const startedAt = new Date();
-  const record = { id, url, status: 'running', startedAt, output: '' };
+  const record = { id, url, itemCount: downloadUrls.length, status: 'running', startedAt, output: '' };
   await jobCollection.insertOne(record);
   const args = [
     '--ignore-errors', '--no-overwrites', '--newline', '--no-color', '--download-archive', path.join(libraryDir, 'download-archive.txt'),
@@ -114,8 +161,8 @@ async function startDownload(url) {
     '--output', path.join(libraryDir, '%(uploader,channel|Unknown uploader)s', '%(playlist_title|Videos)s', '%(upload_date)s - %(title).180B [%(id)s].%(ext)s'),
   ];
   if (process.env.COOKIE_FILE) args.push('--cookies', process.env.COOKIE_FILE);
-  args.push(url);
-  log('info', 'download_started', { jobId: id, url });
+  args.push(...downloadUrls);
+  log('info', 'download_started', { jobId: id, url, itemCount: downloadUrls.length });
   const child = spawn(process.env.YTDLP_PATH || 'yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let output = '';
   let lastPersist = 0;
@@ -141,7 +188,7 @@ async function startDownload(url) {
       try { await syncLibrary(); } catch (error) { log('error', 'library_sync_failed', { jobId: id, error: error.message }); }
     }
   });
-  return { id, url, status: 'running', startedAt };
+  return { id, url, itemCount: downloadUrls.length, status: 'running', startedAt };
 }
 
 async function serveFile(req, res, filePath) {
@@ -193,6 +240,19 @@ const server = http.createServer(async (req, res) => {
     } else if (req.method === 'GET' && url.pathname === '/api/jobs') {
       const result = await jobCollection.find({}, { projection: { _id: 0 } }).sort({ startedAt: -1 }).limit(20).toArray();
       sendJson(res, 200, result);
+    } else if (req.method === 'POST' && url.pathname === '/api/pages') {
+      const body = await readRequestBody(req);
+      const pageUrl = typeof body.pageUrl === 'string' ? body.pageUrl.trim() : '';
+      const limit = Number(body.limit);
+      if (!isFacebookUrl(pageUrl) || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+        sendJson(res, 400, { error: 'Enter a Facebook page URL and a reel count from 1 to 100.' }); return;
+      }
+      const reels = await findPageReels(pageUrl, limit);
+      if (!reels.length) {
+        sendJson(res, 422, { error: 'No reel links were found on the page. Facebook may require login, or the page may not expose reels in its HTML. Try its /reels/ tab or use direct reel links.' }); return;
+      }
+      const job = await startDownload(pageUrl, reels);
+      sendJson(res, 202, { ...job, discovered: reels.length });
     } else if (req.method === 'POST' && url.pathname === '/api/downloads') {
       const body = await readRequestBody(req);
       if (!isFacebookUrlList(body)) { sendJson(res, 400, { error: 'Enter 1 to 20 valid Facebook URLs.' }); return; }

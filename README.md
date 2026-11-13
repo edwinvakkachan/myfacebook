@@ -37,7 +37,7 @@ Restart the app with `docker compose up -d`. Treat that file like a password. Th
 
 ## Web library
 
-The interface provides URL submission, download status, title/creator search, thumbnails, and in-browser playback. One URL per line is supported, with up to 20 links per submission. Download jobs and the catalog are stored in MongoDB; media files remain in the mounted library folder.
+The interface provides URL submission, page reels, download status, title/creator search, thumbnails, and in-browser playback. Paste a Facebook page URL and choose a reel limit from 1 to 100; the app scans the page's accessible `/reels/` markup and queues the reel links it finds. Facebook may expose only some links or require authorized cookies, so page collection depends on what that account can access. Direct video URL submissions accept up to 20 links. Download jobs and the catalog are stored in MongoDB; media files remain in the mounted library folder.
 
 ## Run the Node server directly
 

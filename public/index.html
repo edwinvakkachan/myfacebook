@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#111411">
   <title>Facebook Archive</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/page-form.css">
 </head>
 <body>
   <header class="topbar">
@@ -18,8 +19,13 @@
       <div class="stats"><strong id="video-count">0</strong><span>videos saved</span></div>
     </section>
     <section class="download-panel">
-      <div class="panel-heading"><div><h2>Add videos</h2><p>Paste one or more Facebook video or page links, one per line.</p></div><span class="download-icon">↓</span></div>
+      <div class="panel-heading"><div><h2>Add videos</h2><p>Save individual video links or collect reels from a page you can access.</p></div><span class="download-icon">↓</span></div>
       <form id="download-form"><textarea id="urls" rows="2" placeholder="https://www.facebook.com/watch/?v=…" required></textarea><div class="form-bottom"><span>Downloads run in the background.</span><button class="primary-button" type="submit"><span>＋</span> Add to archive</button></div></form>
+      <form id="page-form" class="page-form">
+        <label class="field-label" for="page-url">Facebook page URL</label>
+        <div class="page-fields"><input id="page-url" type="url" placeholder="https://www.facebook.com/page-name/" required><label class="count-field">Reel limit<input id="reel-limit" type="number" min="1" max="100" value="10" required></label></div>
+        <div class="form-bottom"><span>Downloads up to the selected number found on the page.</span><button class="primary-button" type="submit"><span>＋</span> Add page reels</button></div>
+      </form>
       <div id="jobs" class="jobs" aria-live="polite"></div>
     </section>
     <section class="library-section">
